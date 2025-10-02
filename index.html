@@ -138,6 +138,10 @@
     let lastCode = '';
     let lastCodeAt = 0;
 
+    // --- Redirect safety config ---
+    const ALLOW_SCHEMES = ['https']; // add 'http' during LAN dev if needed
+    const ALLOW_DOMAINS = [];        // e.g. ['yourshop.com','pay.yourshop.com']; empty = allow any domain
+
     function say(text) { msg.textContent = text || ''; }
 
     function stopStream() {
@@ -208,7 +212,6 @@
       if ('BarcodeDetector' in window) {
         try {
           const fmts = await BarcodeDetector.getSupportedFormats?.() || [];
-          // 某些实现没有 getSupportedFormats，这里默认尝试
           canNativeQR = fmts.length ? fmts.includes('qr_code') : true;
         } catch (_) { canNativeQR = true; }
       }
@@ -230,7 +233,7 @@
         return;
       }
 
-      // —— jsQR 兼容路径 ——（控制画布不超过 1280 宽，减轻 CPU 占用）
+      // —— jsQR 兼容路径 ——
       document.body.classList.add('scanning');
       say('已切换到兼容扫码模式。');
       scanning = true;
@@ -250,17 +253,39 @@
       })();
     }
 
-    // 统一的识别处理（去重 + 提示 + 震动）
-    function handleDetect(txt) {
+    // —— 立即跳转（保留后退栈）逻辑 —— //
+    function isSafeUrl(u) {
+      try {
+        const url = new URL(u);
+        const scheme = url.protocol.replace(':','');
+        if (!ALLOW_SCHEMES.includes(scheme)) return false;
+        if (ALLOW_DOMAINS.length && !ALLOW_DOMAINS.some(d => url.hostname === d || url.hostname.endsWith('.'+d))) {
+          return false;
+        }
+        return true;
+      } catch { return false; }
+    }
+
+    function handleDetect(raw) {
       const now = Date.now();
-      if (txt !== lastCode || now - lastCodeAt > 3000) {
-        lastCode = txt; lastCodeAt = now;
-        say(`识别到二维码：${txt}`);
-        showCard('识别到二维码', escapeHtml(txt || ''));
+      if (raw !== lastCode || now - lastCodeAt > 3000) {
+        lastCode = raw; lastCodeAt = now;
         hint.style.display = 'none';
         try { navigator.vibrate?.(20); } catch {}
-        // 可选：若是 URL 可自动跳转（谨慎开启）
-        // if (/^https?:\/\//i.test(txt)) location.href = txt;
+
+        // 如果不是完整 URL，尝试补全为 https://
+        let target = raw;
+        if (!/^[a-z]+:\/\//i.test(target)) target = 'https://' + target;
+
+        if (isSafeUrl(target)) {
+          say(`跳转中：${target}`);
+          scanning = false;        // 停止扫描循环，避免重复跳转
+          // 不调用 stopStream()，让页面保留相机状态；离开后返回会重新启动
+          location.href = target;  // <— 用 href 保留浏览器返回栈，返回即可回到相机页
+        } else {
+          showCard('已拦截不安全链接','仅允许 https 或白名单域名。');
+          say('识别到二维码，但未通过安全校验。');
+        }
       }
     }
 
