@@ -17,7 +17,7 @@
 
     /* Floating receipt button */
     #receiptBtn {
-      position:fixed; top:12px; right:12px; z-index:3;
+      position:fixed; top:12px; left:12px; z-index:3;
       padding:.5rem .7rem; background:rgba(255,255,255,.9); border:1px solid #ddd; border-radius:10px;
     }
 
@@ -60,7 +60,7 @@
   
     /* Centered, with ~20% space to all borders, scrollable body */
     #receiptOverlay .modal{
-      width: min(800px, 60vw);   /* ~20% left/right margins */
+      width: min(800px, 65vw);   /* ~20% left/right margins */
       max-height: 60vh;          /* ~20% top/bottom margins */
       display: flex;
       flex-direction: column;    /* so header/content/footer stack */
@@ -523,7 +523,7 @@
         `- 内存(GB): ${mem}`,
         ``,
         `浏览器信息`,
-        `- 浏览器代理: ${ua}`,
+        `${ua}`,
         ``,
         `屏幕信息`,
         `- 窗口: ${vp}`,
@@ -535,7 +535,7 @@
         `摄像头参数`,
         camInfo,
         ``,
-        `设备倾斜数据`,
+        `设备倾斜角度`,
         tiltInfo
       ].join('\n');
     }
