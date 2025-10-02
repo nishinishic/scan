@@ -109,6 +109,9 @@
     </div>
   </div>
 
+  <!-- jsQR 兼容库（fallback） -->
+  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+
   <script>
     const video = document.getElementById('video');
     const msg   = document.getElementById('msg');
@@ -195,39 +198,70 @@
       }
     }
 
-    // QR scanning via BarcodeDetector + show/hide scanning effect
+    // 原生优先 + jsQR 兼容的扫码循环
     async function startScanLoop() {
-      if (!('BarcodeDetector' in window)) {
-        say('此浏览器暂不支持原生二维码识别。');
-        document.body.classList.remove('scanning');
-        return;
-      }
-      document.body.classList.add('scanning');
-      const det = new BarcodeDetector({ formats: ['qr_code'] });
       const canvas = document.createElement('canvas');
       const ctx = canvas.getContext('2d');
 
-      scanning = true;
-      (async function loop() {
-        if (!scanning || !video.videoWidth) { requestAnimationFrame(loop); return; }
-        canvas.width = video.videoWidth; canvas.height = video.videoHeight;
-        ctx.drawImage(video, 0, 0);
+      // 检测是否能用原生 QR
+      let canNativeQR = false;
+      if ('BarcodeDetector' in window) {
         try {
-          const codes = await det.detect(canvas);
-          if (codes.length) {
-            const now = Date.now();
-            const txt = codes[0].rawValue || '';
-            if (txt !== lastCode || now - lastCodeAt > 3000) {
-              lastCode = txt; lastCodeAt = now;
-              say(`识别到二维码：${txt}`);
-              showCard('识别到二维码', escapeHtml(txt || ''));
-              hint.style.display = 'none';
-              try { navigator.vibrate?.(20); } catch {}
-            }
-          }
+          const fmts = await BarcodeDetector.getSupportedFormats?.() || [];
+          // 某些实现没有 getSupportedFormats，这里默认尝试
+          canNativeQR = fmts.length ? fmts.includes('qr_code') : true;
+        } catch (_) { canNativeQR = true; }
+      }
+
+      if (canNativeQR) {
+        document.body.classList.add('scanning');
+        const det = new BarcodeDetector({ formats: ['qr_code'] });
+        scanning = true;
+        (async function loop() {
+          if (!scanning || !video.videoWidth) { requestAnimationFrame(loop); return; }
+          canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+          ctx.drawImage(video, 0, 0);
+          try {
+            const codes = await det.detect(canvas);
+            if (codes?.length) handleDetect(codes[0].rawValue || '');
+          } catch {}
+          requestAnimationFrame(loop);
+        })();
+        return;
+      }
+
+      // —— jsQR 兼容路径 ——（控制画布不超过 1280 宽，减轻 CPU 占用）
+      document.body.classList.add('scanning');
+      say('已切换到兼容扫码模式。');
+      scanning = true;
+      (function loop() {
+        if (!scanning || !video.videoWidth) { requestAnimationFrame(loop); return; }
+        const maxW = 1280;
+        const scale = Math.min(1, maxW / video.videoWidth);
+        canvas.width = Math.floor(video.videoWidth * scale);
+        canvas.height = Math.floor(video.videoHeight * scale);
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        try {
+          const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          const result = jsQR(img.data, img.width, img.height, { inversionAttempts: 'dontInvert' });
+          if (result?.data) handleDetect(result.data);
         } catch {}
         requestAnimationFrame(loop);
       })();
+    }
+
+    // 统一的识别处理（去重 + 提示 + 震动）
+    function handleDetect(txt) {
+      const now = Date.now();
+      if (txt !== lastCode || now - lastCodeAt > 3000) {
+        lastCode = txt; lastCodeAt = now;
+        say(`识别到二维码：${txt}`);
+        showCard('识别到二维码', escapeHtml(txt || ''));
+        hint.style.display = 'none';
+        try { navigator.vibrate?.(20); } catch {}
+        // 可选：若是 URL 可自动跳转（谨慎开启）
+        // if (/^https?:\/\//i.test(txt)) location.href = txt;
+      }
     }
 
     // Pause/resume video element (keep permission) + pause scanning fx
