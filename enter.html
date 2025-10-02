@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>扫码进入手机维修店</title>
+  <style>
+    html, body { margin:0; height:100%; background:#000; }
+    video { position:fixed; inset:0; width:100vw; height:100vh; object-fit:cover; background:#000; }
+    #msg { position:fixed; top:0; left:0; right:0; text-align:center; color:#fff; padding:10px;
+           font-family:system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; text-shadow:0 1px 2px rgba(0,0,0,.6); z-index: 1; }
+
+    /* Bottom UI */
+    .ui { position:fixed; left:0; right:0; bottom:0; display:flex; gap:8px; justify-content:center; padding:12px;
+          background:linear-gradient(transparent, rgba(0,0,0,.6)); z-index: 1; }
+    select, button { font:inherit; padding:8px 12px; border-radius:8px; border:1px solid #ccc; background:#fff; }
+
+    /* Subtle scan hint */
+    #hint { position:fixed; left:50%; bottom:18%; transform:translateX(-50%);
+      padding:.4rem .6rem; background:rgba(0,0,0,.55); color:#fff; border-radius:8px; z-index:1; }
+    @keyframes pulse { 0%{transform:translateX(-50%) scale(1);} 50%{transform:translateX(-50%) scale(1.06);} 100%{transform:translateX(-50%) scale(1);} }
+    #hint { animation:pulse 1.6s ease-in-out infinite; }
+
+    /* --- SIMPLE SCAN EFFECT --- */
+    #scanFx { position:fixed; inset:0; pointer-events:none; z-index:2; display:none; }
+    body.scanning #scanFx { display:block; }
+    .beam {
+      position:absolute; left:70px; right:70px; height:2px;
+      background:rgba(159, 253, 159, 0.3);
+      box-shadow:0 0 10px rgba(145, 255, 145, 0.3), 0 0 2px rgba(172, 255, 172, 0.5) inset;
+      animation:vscan 4.4s ease-in-out infinite alternate;
+    }
+    @keyframes vscan { from { top:30vh; } to { top:70vh; } }
+    /* Pause dimming */
+    body.paused #scanFx .beam { animation-play-state: paused; opacity:.25; }
+
+    /* --- Plain modal --- */
+    .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.55);
+      display: none; align-items: center; justify-content: center; padding: 16px; z-index: 10; }
+    .overlay.open { display: flex; }
+    .modal { width: min(520px, 92vw); background: #fff; color: #111; border: 1px solid #ddd; border-radius: 8px;
+      box-shadow: 0 6px 24px rgba(0,0,0,.25); font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
+    .modal header { padding: 14px 16px; border-bottom: 1px solid #eee; font-weight: 600; }
+    .modal .content { padding: 14px 16px; line-height: 1.55; }
+    .modal footer { padding: 12px 16px; border-top: 1px solid #eee; display:flex; gap:8px; justify-content:flex-end; }
+    .modal button { background:#fff; border:1px solid #ccc; padding:8px 12px; border-radius:7px; }
+    .modal button.primary { background:#111; color:#fff; border-color:#111; }
+    .muted { color:#555; font-size:.92rem; }
+    label { display:flex; align-items:center; gap:.5rem; margin-top:.5rem; }
+    input[type="text"]{ width:70%; padding:.6rem; border:1px solid #ccc; border-radius:6px; }
+  </style>
+</head>
+<body>
+  <div id="msg">请根据店内二维码指示扫码、行动、操作手机</div>
+  <video id="video" autoplay playsinline muted></video>
+
+  <!-- simple scanning overlay -->
+  <div id="scanFx"><div class="beam"></div></div>
+
+  <!-- subtle scan hint -->
+  <div id="hint">寻找店内二维码进行扫码</div>
+
+  <div class="ui">
+    <button id="pauseCam">截屏</button>
+    <select id="cameras" hidden></select>
+  </div>
+
+  <!-- Consent Modal -->
+  <div class="overlay" id="consentOverlay" role="dialog" aria-modal="true" aria-labelledby="consentTitle">
+    <div class="modal">
+      <header id="consentTitle">摄像头扫码同意书</header>
+      <div class="content">
+        <p>在您进入手机维修店前，请确认：</p>
+        <ul>
+          <li>本页面将请求访问您的摄像头，仅用于店内互动与扫码指引。</li>
+          <li>若点击「同意」，表示您理解该用途并允许开启摄像头。</li>
+        </ul>
+        <p><strong>同意后操作说明：</strong><br>请根据店内二维码指示扫码、行动、操作手机。</p>
+        <label><input type="checkbox" id="rememberConsent" /> 本次会话内不再提示（记住我的同意）</label>
+      </div>
+      <footer>
+        <button id="cancelConsent">取消</button>
+        <button class="primary" id="agreeConsent">同意</button>
+      </footer>
+    </div>
+  </div>
+
+  <!-- Playful nudge Modal -->
+  <div class="overlay" id="nudgeOverlay" role="dialog" aria-modal="true" aria-labelledby="nudgeTitle">
+    <div class="modal">
+      <header id="nudgeTitle">提示</header>
+      <div class="content"><p>你一定还是想点开摄像头的。</p></div>
+      <footer><button class="primary" id="nudgeOk">好的</button></footer>
+    </div>
+  </div>
+
+  <!-- Third modal: ask + input -->
+  <div class="overlay" id="askOverlay" role="dialog" aria-modal="true" aria-labelledby="askTitle">
+    <div class="modal">
+      <header id="askTitle">问题</header>
+      <div class="content">
+        <p>您最近一次扫的是什么码？</p>
+        <input id="askInput" type="text" placeholder="付款/共享单车/小程序/外卖/门禁…">
+      </div>
+      <footer>
+        <button id="askSkip">跳过</button>
+        <button class="primary" id="askOk">继续</button>
+      </footer>
+    </div>
+  </div>
+
+  <script>
+    const video = document.getElementById('video');
+    const msg   = document.getElementById('msg');
+    const cameras  = document.getElementById('cameras');
+    const pauseCam = document.getElementById('pauseCam');
+
+    const consentOverlay = document.getElementById('consentOverlay');
+    const agreeBtn = document.getElementById('agreeConsent');
+    const cancelBtn = document.getElementById('cancelConsent');
+    const rememberConsent = document.getElementById('rememberConsent');
+
+    const nudgeOverlay = document.getElementById('nudgeOverlay');
+    const nudgeOk = document.getElementById('nudgeOk');
+
+    const askOverlay = document.getElementById('askOverlay');
+    const askOk = document.getElementById('askOk');
+    const askSkip = document.getElementById('askSkip');
+    const askInput = document.getElementById('askInput');
+
+    const hint = document.getElementById('hint');
+
+    let stream = null;
+    let scanning = false;
+    let lastCode = '';
+    let lastCodeAt = 0;
+
+    function say(text) { msg.textContent = text || ''; }
+
+    function stopStream() {
+      if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+      scanning = false;
+      document.body.classList.remove('scanning');
+    }
+
+    async function listCameras() {
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const vids = devices.filter(d => d.kind === 'videoinput');
+        cameras.innerHTML = '';
+        vids.forEach((d, i) => {
+          const opt = document.createElement('option');
+          opt.value = d.deviceId;
+          opt.textContent = d.label || `摄像头 ${i+1}`;
+          cameras.appendChild(opt);
+        });
+        cameras.hidden = vids.length <= 1;
+      } catch {}
+    }
+
+    async function startCamera(deviceId = null) {
+      stopStream();
+      say('正在请求摄像头…');
+
+      const videoConstraints = deviceId
+        ? { deviceId: { exact: deviceId } }
+        : { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } };
+
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video: videoConstraints, audio: false });
+        video.srcObject = stream;
+        await video.play().catch(()=>{});
+        say('');
+        await listCameras();
+
+        const current = stream.getVideoTracks()[0]?.getSettings()?.deviceId;
+        if (current && [...cameras.options].some(o => o.value === current)) {
+          cameras.value = current;
+        }
+
+        startScanLoop(); // start scanning after camera is live
+
+      } catch (err) {
+        console.error(err);
+        let hintTxt = '';
+        if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
+          hintTxt = ' 使用 HTTPS 或 localhost 访问。';
+        } else if (err.name === 'NotAllowedError') {
+          hintTxt = ' 已被拒绝权限，请在浏览器站点设置中允许摄像头。';
+        } else if (err.name === 'NotFoundError') {
+          hintTxt = ' 未找到摄像头或已被其他应用占用。';
+        }
+        say(`无法访问摄像头：${err.name || ''} ${err.message || ''}${hintTxt ? ' — ' + hintTxt : ''}`);
+        throw err;
+      }
+    }
+
+    // QR scanning via BarcodeDetector + show/hide scanning effect
+    async function startScanLoop() {
+      if (!('BarcodeDetector' in window)) {
+        say('此浏览器暂不支持原生二维码识别。');
+        document.body.classList.remove('scanning');
+        return;
+      }
+      document.body.classList.add('scanning');
+      const det = new BarcodeDetector({ formats: ['qr_code'] });
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+
+      scanning = true;
+      (async function loop() {
+        if (!scanning || !video.videoWidth) { requestAnimationFrame(loop); return; }
+        canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+        ctx.drawImage(video, 0, 0);
+        try {
+          const codes = await det.detect(canvas);
+          if (codes.length) {
+            const now = Date.now();
+            const txt = codes[0].rawValue || '';
+            if (txt !== lastCode || now - lastCodeAt > 3000) {
+              lastCode = txt; lastCodeAt = now;
+              say(`识别到二维码：${txt}`);
+              showCard('识别到二维码', escapeHtml(txt || ''));
+              hint.style.display = 'none';
+              try { navigator.vibrate?.(20); } catch {}
+            }
+          }
+        } catch {}
+        requestAnimationFrame(loop);
+      })();
+    }
+
+    // Pause/resume video element (keep permission) + pause scanning fx
+    pauseCam.addEventListener('click', () => {
+      if (video.paused) {
+        video.play().catch(()=>{});
+        pauseCam.textContent = '截屏';
+        say('');
+        document.body.classList.remove('paused');
+      } else {
+        video.pause();
+        pauseCam.textContent = '恢复';
+        say('已截屏！再次点击恢复扫码。');
+        document.body.classList.add('paused');
+      }
+    });
+
+    // --- overlay helpers ---
+    function open(el) { el.classList.add('open'); }
+    function close(el) { el.classList.remove('open'); }
+
+    function openConsent() {
+      if (sessionStorage.getItem('consented_camera') === '1') return;
+      open(consentOverlay);
+      setTimeout(() => agreeBtn.focus(), 0);
+    }
+
+    function openAsk() {
+      open(askOverlay);
+      setTimeout(() => askInput.focus(), 0);
+    }
+
+    // Consent actions → then Ask
+    agreeBtn.addEventListener('click', () => {
+      if (rememberConsent.checked) sessionStorage.setItem('consented_camera', '1');
+      close(consentOverlay);
+      openAsk();
+    });
+
+    // Cancel → playful nudge → then Ask
+    cancelBtn.addEventListener('click', () => {
+      close(consentOverlay);
+      open(nudgeOverlay);
+      setTimeout(() => nudgeOk.focus(), 0);
+      say('');
+    });
+    nudgeOk.addEventListener('click', () => {
+      close(nudgeOverlay);
+      openAsk();
+    });
+
+    // Branch after answer
+    askOk.addEventListener('click', () => {
+      const v = (askInput.value || '').trim();
+      if (v) localStorage.setItem('last_scan_kind', v);
+      close(askOverlay);
+      routeByAnswer(v);
+    });
+    askSkip.addEventListener('click', () => {
+      close(askOverlay);
+      routeByAnswer('');
+    });
+
+    function routeByAnswer(v){
+      if (/付|支付|付款|收款/.test(v)) {
+        showCard('支付小提示','请遮挡金额、实名等敏感内容；以防泄漏个人信息和财产。');
+      } else if (/门禁|通行|出入|小区|单位/.test(v)) {
+        showCard('进入提示','请注意本地信息安全，维护硬件设施。');
+      } else if (/公众号|小程序|订阅|关注/.test(v)) {
+        showCard('关注提醒','确认二维码可信，避免非必要不扫码的情况。');
+      } else if (v) {
+        showCard('扫码拍摄提示','请注意旁人的隐私和权利关系，避免故意拍摄他人。');
+      } else {
+        showCard('欢迎经过扫过','请寻找店内二维码扫码、拍摄。');
+      }
+    }
+
+    function showCard(title, body){
+      const card = document.createElement('div');
+      card.style = 'position:fixed;top:12px;right:12px;background:rgba(0,0,0,.65);color:#fff;padding:.8rem;border-radius:10px;max-width:72vw;z-index:2';
+      card.innerHTML = `<strong>${escapeHtml(title)}</strong><div style="margin-top:.4rem">${escapeHtml(body)}</div>`;
+      document.body.appendChild(card);
+      setTimeout(()=>card.remove(), 6000);
+    }
+
+    function escapeHtml(s){ return s.replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+
+    cameras.addEventListener('change', async () => {
+      await startCamera(cameras.value);
+    });
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible' && stream && video.paused) {
+        video.play().catch(()=>{});
+      }
+    });
+
+    (async function boot() {
+      if (!navigator.mediaDevices?.getUserMedia) { say('当前浏览器不支持摄像头。'); return; }
+      if (!window.isSecureContext && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
+        say(`非安全来源（${location.protocol}//${location.host}），浏览器可能会屏蔽摄像头。请使用 https:// 或 localhost。`);
+      }
+      try {
+        await startCamera();
+        openConsent();
+      } catch (e) {
+        openConsent();
+      }
+    })();
+  </script>
+</body>
+</html>
