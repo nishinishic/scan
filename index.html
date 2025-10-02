@@ -141,7 +141,7 @@
   <!-- Receipt overlay (can be opened anytime; auto-refresh while open) -->
   <div class="overlay" id="receiptOverlay" role="dialog" aria-modal="true" aria-labelledby="receiptTitle">
     <div class="modal">
-      <header id="receiptTitle">SCAN RECEIPT 扫描小票</header>
+      <header id="receiptTitle">扫描小票</header>
       <div class="content">
         <div id="receiptContent"></div>
         <p class="muted" style="margin-top:8px;">扫码数据不保留，可截屏留念。</p>
@@ -512,30 +512,30 @@
       ].join('\n');
       const tiltInfo = `alpha: ${tilt.alpha ?? 'N/A'}, beta: ${tilt.beta ?? 'N/A'}, gamma: ${tilt.gamma ?? 'N/A'}`;
       return [
-        `此次扫码信息`,
+        `此次扫码数据：`,
         `====================`,
         `时间: ${new Date().toLocaleString()}`,
         ``,
         `设备信息`,
-        `- 平台: ${plat}`,
+        `- 设备: ${plat}`,
         `- 语言: ${lang}`,
         `- 核心数: ${hwc}`,
         `- 内存(GB): ${mem}`,
         ``,
         `浏览器信息`,
-        `- UA: ${ua}`,
+        `- 浏览器代理: ${ua}`,
         ``,
         `屏幕信息`,
-        `- 视口: ${vp}`,
+        `- 窗口: ${vp}`,
         `- 屏幕: ${scr}`,
         `- 页面停留: ${timeOnPage}`,
-        `- 滚动次数: ${scrollCount}`,
-        `- 最大滚动Y: ${Math.round(maxScrollY)}px`,
+        `- 页面划动次数: ${scrollCount}`,
+        `- 最大划动幅度: ${Math.round(maxScrollY)}px`,
         ``,
         `摄像头参数`,
         camInfo,
         ``,
-        `设备姿态(倾斜)`,
+        `设备倾斜数据`,
         tiltInfo
       ].join('\n');
     }
