@@ -57,6 +57,23 @@
 
     /* receipt content */
     #receiptContent { white-space:pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background:#fafafa; border:1px solid #eee; padding:10px; border-radius:6px; font-size:14px; }
+  
+    /* Centered, with ~20% space to all borders, scrollable body */
+    #receiptOverlay .modal{
+      width: min(800px, 30vw);   /* ~20% left/right margins */
+      max-height: 60vh;          /* ~20% top/bottom margins */
+      display: flex;
+      flex-direction: column;    /* so header/content/footer stack */
+    }
+    #receiptOverlay .modal .content{
+      overflow: auto;            /* scroll inside the popup */
+    }
+    /* Optional: keep footer visible while content scrolls */
+    #receiptOverlay .modal footer{
+      position: sticky;
+      bottom: 0;
+      background: #fff;
+    }
   </style>
 </head>
 <body>
