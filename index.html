@@ -15,6 +15,12 @@
           background:linear-gradient(transparent, rgba(0,0,0,.6)); z-index: 1; }
     select, button { font:inherit; padding:8px 12px; border-radius:8px; border:1px solid #ccc; background:#fff; }
 
+    /* Floating receipt button */
+    #receiptBtn {
+      position:fixed; top:12px; right:12px; z-index:3;
+      padding:.5rem .7rem; background:rgba(255,255,255,.9); border:1px solid #ddd; border-radius:10px;
+    }
+
     /* Subtle scan hint */
     #hint { position:fixed; left:50%; bottom:18%; transform:translateX(-50%);
       padding:.4rem .6rem; background:rgba(0,0,0,.55); color:#fff; border-radius:8px; z-index:1; }
@@ -31,23 +37,26 @@
       animation:vscan 4.4s ease-in-out infinite alternate;
     }
     @keyframes vscan { from { top:30vh; } to { top:70vh; } }
-    /* Pause dimming */
     body.paused #scanFx .beam { animation-play-state: paused; opacity:.25; }
 
     /* --- Plain modal --- */
     .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.55);
       display: none; align-items: center; justify-content: center; padding: 16px; z-index: 10; }
     .overlay.open { display: flex; }
-    .modal { width: min(520px, 92vw); background: #fff; color: #111; border: 1px solid #ddd; border-radius: 8px;
+    .modal { width: min(560px, 92vw); background: #fff; color: #111; border: 1px solid #ddd; border-radius: 8px;
       box-shadow: 0 6px 24px rgba(0,0,0,.25); font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
     .modal header { padding: 14px 16px; border-bottom: 1px solid #eee; font-weight: 600; }
     .modal .content { padding: 14px 16px; line-height: 1.55; }
     .modal footer { padding: 12px 16px; border-top: 1px solid #eee; display:flex; gap:8px; justify-content:flex-end; }
     .modal button { background:#fff; border:1px solid #ccc; padding:8px 12px; border-radius:7px; }
     .modal button.primary { background:#111; color:#fff; border-color:#111; }
+
     .muted { color:#555; font-size:.92rem; }
     label { display:flex; align-items:center; gap:.5rem; margin-top:.5rem; }
     input[type="text"]{ width:70%; padding:.6rem; border:1px solid #ccc; border-radius:6px; }
+
+    /* receipt content */
+    #receiptContent { white-space:pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background:#fafafa; border:1px solid #eee; padding:10px; border-radius:6px; font-size:14px; }
   </style>
 </head>
 <body>
@@ -59,6 +68,9 @@
 
   <!-- subtle scan hint -->
   <div id="hint">寻找店内二维码扫码</div>
+
+  <!-- floating receipt button -->
+  <button id="receiptBtn" title="查看扫描小票">扫码小票</button>
 
   <div class="ui">
     <button id="pauseCam">截屏</button>
@@ -109,6 +121,21 @@
     </div>
   </div>
 
+  <!-- Receipt overlay (can be opened anytime; auto-refresh while open) -->
+  <div class="overlay" id="receiptOverlay" role="dialog" aria-modal="true" aria-labelledby="receiptTitle">
+    <div class="modal">
+      <header id="receiptTitle">SCAN RECEIPT 扫描小票</header>
+      <div class="content">
+        <div id="receiptContent"></div>
+        <p class="muted" style="margin-top:8px;">扫码数据不保留，可截屏留念。</p>
+      </div>
+      <footer>
+        <button id="receiptClose">关闭</button>
+        <button class="primary" id="receiptNext">继续</button>
+      </footer>
+    </div>
+  </div>
+
   <!-- jsQR 兼容库（fallback） -->
   <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
 
@@ -131,16 +158,49 @@
     const askSkip = document.getElementById('askSkip');
     const askInput = document.getElementById('askInput');
 
+    const receiptOverlay = document.getElementById('receiptOverlay');
+    const receiptContent = document.getElementById('receiptContent');
+    const receiptNext = document.getElementById('receiptNext');
+    const receiptClose = document.getElementById('receiptClose');
+    const receiptBtn = document.getElementById('receiptBtn');
+
     const hint = document.getElementById('hint');
+
+    // Redirect safety config
+    const ALLOW_SCHEMES = ['https']; // add 'http' for LAN testing if needed
+    const ALLOW_DOMAINS = [];        // e.g. ['yourshop.com']
 
     let stream = null;
     let scanning = false;
     let lastCode = '';
     let lastCodeAt = 0;
 
-    // --- Redirect safety config ---
-    const ALLOW_SCHEMES = ['https']; // add 'http' during LAN dev if needed
-    const ALLOW_DOMAINS = [];        // e.g. ['yourshop.com','pay.yourshop.com']; empty = allow any domain
+    // meta capture
+    const pageStart = performance.now();
+    let scrollCount = 0, maxScrollY = 0;
+    window.addEventListener('scroll', () => {
+      scrollCount++; maxScrollY = Math.max(maxScrollY, window.scrollY || window.pageYOffset || 0);
+    }, { passive: true });
+
+    // tilt (best-effort)
+    let tilt = { alpha: null, beta: null, gamma: null };
+    function enableOrientation() {
+      try {
+        const ask = window.DeviceOrientationEvent && DeviceOrientationEvent.requestPermission;
+        if (ask) {
+          DeviceOrientationEvent.requestPermission().then(state => {
+            if (state === 'granted') window.addEventListener('deviceorientation', onTilt, true);
+          }).catch(()=>{});
+        } else if ('DeviceOrientationEvent' in window) {
+          window.addEventListener('deviceorientation', onTilt, true);
+        }
+      } catch {}
+    }
+    function onTilt(e) {
+      tilt.alpha = e.alpha != null ? Math.round(e.alpha) : null;
+      tilt.beta  = e.beta  != null ? Math.round(e.beta)  : null;
+      tilt.gamma = e.gamma != null ? Math.round(e.gamma) : null;
+    }
 
     function say(text) { msg.textContent = text || ''; }
 
@@ -202,7 +262,7 @@
       }
     }
 
-    // 原生优先 + jsQR 兼容的扫码循环
+    // 原生优先 + jsQR 兼容的扫码循环（跳转逻辑仍为“立即跳转”，不再在此弹小票）
     async function startScanLoop() {
       const canvas = document.createElement('canvas');
       const ctx = canvas.getContext('2d');
@@ -253,7 +313,7 @@
       })();
     }
 
-    // —— 立即跳转（保留后退栈）逻辑 —— //
+    // —— 立即跳转（保留后退栈） —— //
     function isSafeUrl(u) {
       try {
         const url = new URL(u);
@@ -265,7 +325,6 @@
         return true;
       } catch { return false; }
     }
-
     function handleDetect(raw) {
       const now = Date.now();
       if (raw !== lastCode || now - lastCodeAt > 3000) {
@@ -273,15 +332,13 @@
         hint.style.display = 'none';
         try { navigator.vibrate?.(20); } catch {}
 
-        // 如果不是完整 URL，尝试补全为 https://
         let target = raw;
         if (!/^[a-z]+:\/\//i.test(target)) target = 'https://' + target;
 
         if (isSafeUrl(target)) {
           say(`跳转中：${target}`);
-          scanning = false;        // 停止扫描循环，避免重复跳转
-          // 不调用 stopStream()，让页面保留相机状态；离开后返回会重新启动
-          location.href = target;  // <— 用 href 保留浏览器返回栈，返回即可回到相机页
+          scanning = false;                // stop loop
+          location.href = target;          // keep back-stack so Back returns to camera
         } else {
           showCard('已拦截不安全链接','仅允许 https 或白名单域名。');
           say('识别到二维码，但未通过安全校验。');
@@ -289,7 +346,7 @@
       }
     }
 
-    // Pause/resume video element (keep permission) + pause scanning fx
+    // Pause/resume video element
     pauseCam.addEventListener('click', () => {
       if (video.paused) {
         video.play().catch(()=>{});
@@ -302,6 +359,7 @@
         say('已截屏！再次点击恢复扫码。');
         document.body.classList.add('paused');
       }
+      enableOrientation(); // 确保倾斜权限请求绑定在用户手势上
     });
 
     // --- overlay helpers ---
@@ -313,20 +371,30 @@
       open(consentOverlay);
       setTimeout(() => agreeBtn.focus(), 0);
     }
-
     function openAsk() {
       open(askOverlay);
       setTimeout(() => askInput.focus(), 0);
     }
+    function openReceipt(autoNext = false) {
+      // autoNext: 是否在“继续”后自动进入问题弹窗
+      startReceiptAutoRefresh();
+      open(receiptOverlay);
+      receiptOverlay.dataset.autoNext = autoNext ? '1' : '0';
+    }
+    function closeReceipt() {
+      stopReceiptAutoRefresh();
+      close(receiptOverlay);
+    }
 
-    // Consent actions → then Ask
+    // Consent actions → Receipt → then Ask
     agreeBtn.addEventListener('click', () => {
       if (rememberConsent.checked) sessionStorage.setItem('consented_camera', '1');
+      enableOrientation();
       close(consentOverlay);
-      openAsk();
+      openReceipt(true);  // 显示小票；点“继续”后进入问题弹窗
     });
 
-    // Cancel → playful nudge → then Ask
+    // Cancel → playful nudge → Receipt → then Ask
     cancelBtn.addEventListener('click', () => {
       close(consentOverlay);
       open(nudgeOverlay);
@@ -334,21 +402,54 @@
       say('');
     });
     nudgeOk.addEventListener('click', () => {
+      enableOrientation();
       close(nudgeOverlay);
-      openAsk();
+      openReceipt(true);  // 小票 → 问题弹窗
     });
 
-    // Branch after answer
+    // Ask actions
     askOk.addEventListener('click', () => {
       const v = (askInput.value || '').trim();
       if (v) localStorage.setItem('last_scan_kind', v);
       close(askOverlay);
       routeByAnswer(v);
+      enableOrientation();
     });
     askSkip.addEventListener('click', () => {
       close(askOverlay);
       routeByAnswer('');
+      enableOrientation();
     });
+
+    // Receipt actions (can come from consent flow or floating button)
+    receiptNext.addEventListener('click', () => {
+      const goAsk = receiptOverlay.dataset.autoNext === '1';
+      closeReceipt();
+      if (goAsk) openAsk();
+    });
+    receiptClose.addEventListener('click', () => {
+      closeReceipt();
+    });
+    receiptBtn.addEventListener('click', () => {
+      enableOrientation();
+      openReceipt(false); // 手动打开，仅展示，不自动进入问题弹窗
+    });
+
+    // Real-time receipt (refresh while open)
+    let receiptTimer = null;
+    function startReceiptAutoRefresh(){
+      updateReceipt(); // immediate
+      clearInterval(receiptTimer);
+      receiptTimer = setInterval(updateReceipt, 1000);
+    }
+    function stopReceiptAutoRefresh(){
+      clearInterval(receiptTimer);
+      receiptTimer = null;
+    }
+    function updateReceipt(){
+      const meta = collectScanMeta();
+      receiptContent.textContent = meta;
+    }
 
     function routeByAnswer(v){
       if (/付|支付|付款|收款/.test(v)) {
@@ -372,7 +473,55 @@
       setTimeout(()=>card.remove(), 6000);
     }
 
-    function escapeHtml(s){ return s.replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+    function escapeHtml(s){ return (s||'').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+
+    function collectScanMeta() {
+      const ua = navigator.userAgent || '';
+      const plat = navigator.platform || '';
+      const lang = navigator.language || '';
+      const hwc = navigator.hardwareConcurrency || 'N/A';
+      const mem = navigator.deviceMemory || 'N/A';
+      const vp = `${window.innerWidth}×${window.innerHeight}`;
+      const scr = `${screen.width}×${screen.height}`;
+      const timeOnPageMs = Math.max(0, Math.round(performance.now() - pageStart));
+      const timeOnPage = `${(timeOnPageMs/1000).toFixed(1)}s`;
+      const cam = (stream?.getVideoTracks?.()[0]?.getSettings?.()) || {};
+      const camInfo = [
+        `分辨率: ${cam.width || '?'}×${cam.height || '?'}`,
+        `帧率: ${cam.frameRate ?? '?'}`,
+        `镜头: ${cam.facingMode || '?'}`,
+        `变焦: ${cam.zoom ?? '?'}`,
+        `抖动: ${cam.imageStabilization ?? 'N/A'}`
+      ].join('\n');
+      const tiltInfo = `alpha: ${tilt.alpha ?? 'N/A'}, beta: ${tilt.beta ?? 'N/A'}, gamma: ${tilt.gamma ?? 'N/A'}`;
+      return [
+        `此次扫码信息`,
+        `====================`,
+        `时间: ${new Date().toLocaleString()}`,
+        ``,
+        `设备信息`,
+        `- 平台: ${plat}`,
+        `- 语言: ${lang}`,
+        `- 核心数: ${hwc}`,
+        `- 内存(GB): ${mem}`,
+        ``,
+        `浏览器信息`,
+        `- UA: ${ua}`,
+        ``,
+        `屏幕信息`,
+        `- 视口: ${vp}`,
+        `- 屏幕: ${scr}`,
+        `- 页面停留: ${timeOnPage}`,
+        `- 滚动次数: ${scrollCount}`,
+        `- 最大滚动Y: ${Math.round(maxScrollY)}px`,
+        ``,
+        `摄像头参数`,
+        camInfo,
+        ``,
+        `设备姿态(倾斜)`,
+        tiltInfo
+      ].join('\n');
+    }
 
     cameras.addEventListener('change', async () => {
       await startCamera(cameras.value);
